@@ -1,17 +1,19 @@
 # ROADrecon MCP Server
 
-This MCP (Model Context Protocol) server provides AI assistants like Claude with access to your ROADrecon Azure AD data for security analysis.
+This MCP (Model Context Protocol) server provides AI assistants like Claude with access to your ROADRecon Azure AD data for security analysis.
+
+The amazing ROADtools suite can be found here: [ROADRecon, ](https://github.com/dirkjanm/ROADtools)
 
 ## Features
 
-- **Resources**: Access Azure AD data from your ROADrecon instance
+- **Resources**: Access Azure AD data from your ROADRecon instance
 - **Tools**: Run security analysis on the data
 - **Prompts**: Pre-built analysis templates for common security tasks
 
 ## Prerequisites
 
 - Python 3.8+
-- A running ROADrecon instance with the web GUI accessible
+- A running ROADRecon instance with the web GUI accessible
 - MCP-compatible client (Claude Desktop, etc.)
 
 ## Installation
@@ -26,14 +28,14 @@ This MCP (Model Context Protocol) server provides AI assistants like Claude with
 
 ### Running the server
 
-1. Make sure your ROADrecon GUI is running (default: http://localhost:5000)
+1. Make sure your ROADRecon GUI is running (default: http://localhost:5000)
 
 2. Run the MCP server:
    ```
    python roadrecon_mcp_server.py
    ```
 
-3. To specify a different ROADrecon URL:
+3. To specify a different ROADRecon URL:
    ```
    ROADRECON_URL=http://localhost:8080 python roadrecon_mcp_server.py
    ```
@@ -44,6 +46,8 @@ This MCP (Model Context Protocol) server provides AI assistants like Claude with
 2. Go to Settings → Servers → Add Server
 3. Select "Add from running server" 
 4. The server should appear in the list - click "Install"
+
+More details on this step can be found here: https://modelcontextprotocol.io/quickstart/server
 
 ### Using in Claude
 
@@ -58,6 +62,12 @@ Once connected, Claude can:
 - "Find all users with privileged roles"
 - "Check for applications with secrets or certificates"
 - "Analyze the overall security posture of this Azure AD environment"
+
+
+
+https://github.com/user-attachments/assets/806e9ccd-d80e-4058-be4f-9d37095f1fd6
+
+
 
 ## Resources Available
 
