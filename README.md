@@ -2,7 +2,7 @@
 
 This MCP (Model Context Protocol) server provides AI assistants like Claude with access to your ROADRecon Azure AD data for security analysis.
 
-The amazing ROADtools suite can be found here: [ROADRecon, ](https://github.com/dirkjanm/ROADtools)
+The amazing ROADtools suite by dirkjanm can be found here: [ROADRecon](https://github.com/dirkjanm/ROADtools)
 
 ## Features
 
