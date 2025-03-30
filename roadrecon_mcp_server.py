@@ -598,7 +598,7 @@ async def analyze_legacy_authentication() -> Dict[str, Any]:
 async def analyze_conditional_access_policies(file_path: str = "") -> Dict[str, Any]:
     """Analyze conditional access policies for security gaps and best practice alignment"""
     # Check if caps.html exists or if a custom file path is provided
-    default_file_path = "caps.html"
+    default_file_path = os.path.join("C:", "Temp", "caps.html")
     file_used = None
     
     # Helper function to parse HTML content
