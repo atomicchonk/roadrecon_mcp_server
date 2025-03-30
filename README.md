@@ -98,7 +98,7 @@ https://github.com/user-attachments/assets/806e9ccd-d80e-4058-be4f-9d37095f1fd6
 - `analyze_pim_implementation()` - Assess Privileged Identity Management implementation
 - `analyze_service_principal_credentials()` - Find over-permissioned service principals with long-lived credentials
 - `analyze_legacy_authentication()` - Identify risks from legacy authentication protocols that bypass MFA
-- `analyze_conditional_access_policies()` - Analyze conditional access implementations and security gaps
+- `analyze_conditional_access_policies(file_path: str = "")` - Analyze conditional access policies from an HTML file. Looks for the file at "C:\Temp\caps.html" by default, or prompts the user to specify a file path if not found.
 
 ## Prompts Available
 
