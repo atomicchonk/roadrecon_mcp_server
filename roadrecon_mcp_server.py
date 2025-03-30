@@ -8,6 +8,8 @@ import json
 import httpx
 from typing import List, Dict, Any, Optional
 import os
+import pathlib
+import re
 from datetime import datetime, timedelta
 from mcp.server.fastmcp import FastMCP, Context, Image
 
@@ -593,114 +595,181 @@ async def analyze_legacy_authentication() -> Dict[str, Any]:
     }
 
 @mcp.tool()
-async def analyze_conditional_access_policies() -> Dict[str, Any]:
+async def analyze_conditional_access_policies(file_path: str = "") -> Dict[str, Any]:
     """Analyze conditional access policies for security gaps and best practice alignment"""
-    # Note: ROADrecon doesn't directly expose Conditional Access policies via its API,
-    # but we can infer some information from authorization policies and other settings
+    # Check if caps.html exists or if a custom file path is provided
+    default_file_path = "caps.html"
+    file_used = None
     
-    auth_policies = await call_roadrecon_api("authorizationpolicies")
-    tenant_details = await call_roadrecon_api("tenantdetails")
-    mfa_data = await call_roadrecon_api("mfa")
-    
-    # Check for security defaults (an alternative to conditional access in some tenants)
-    security_defaults_enabled = False
-    for policy in auth_policies:
-        if policy.get("enabledPreviewFeatures") and "SecurityDefaults" in policy.get("enabledPreviewFeatures"):
-            security_defaults_enabled = True
-            break
-    
-    # Analyze MFA enforcement
-    total_users = len(mfa_data)
-    users_with_mfa = sum(1 for user in mfa_data if user.get("mfamethods", 0) > 0)
-    mfa_percentage = round((users_with_mfa / total_users) * 100, 2) if total_users > 0 else 0
-    
-    # Check for per-user MFA (legacy) vs. Conditional Access MFA
-    per_user_mfa_count = sum(1 for user in mfa_data if user.get("perusermfa") == "enabled")
-    likely_using_ca_for_mfa = users_with_mfa > per_user_mfa_count
-    
-    # Identify potential gaps in coverage
-    users_without_mfa = [
-        {
-            "displayName": user.get("displayName"),
-            "userPrincipalName": user.get("userPrincipalName"),
-            "objectId": user.get("objectId")
+    # Helper function to parse HTML content
+    def parse_html_ca_policies(html_content):
+        # Extract policy names from table headers
+        policy_names = re.findall(r'<thead><tr><td[^>]*>(.*?)</td></tr></thead>', html_content, re.DOTALL)
+        
+        # If we don't find policy names in the expected format, try alternative patterns
+        if not policy_names:
+            # Look for policies in thead td elements
+            policy_names = re.findall(r'<thead><tr><td[^>]*colspan="2">(.*?)</td></tr></thead>', html_content, re.DOTALL)
+        
+        # Initialize policies list
+        policies = []
+        
+        # Extract policy details
+        for i, name in enumerate(policy_names):
+            # Default to "Enabled" since displayed policies are typically enabled
+            # In a real implementation, you might want to look for specific indicators
+            state = "Enabled"
+            
+            # Check for MFA requirements in the policy
+            # Find the table body that follows this policy name
+            table_pattern = f'<thead><tr><td[^>]*>{re.escape(name)}</td></tr></thead><tbody>(.*?)</tbody>'
+            table_matches = re.findall(table_pattern, html_content, re.DOTALL)
+            
+            requires_mfa = False
+            if table_matches:
+                table_content = table_matches[0]
+                # Check for MFA requirement indicators
+                requires_mfa = ('mfa' in table_content.lower() or 
+                               'multi-factor' in table_content.lower() or 
+                               'multifactor' in table_content.lower())
+            
+            policies.append({
+                "name": name.strip(),
+                "state": state,
+                "requiresMfa": requires_mfa
+            })
+        
+        # If we still didn't find policies, try a more general approach
+        if not policies:
+            # Look for any h1/h2/h3 elements that might contain policy names
+            potential_policies = re.findall(r'<h[123][^>]*>(.*?)</h[123]>', html_content, re.DOTALL)
+            for name in potential_policies:
+                if "policy" in name.lower() or "require" in name.lower() or "allow" in name.lower():
+                    requires_mfa = 'mfa' in html_content.lower() or 'multi-factor' in html_content.lower()
+                    policies.append({
+                        "name": name.strip(),
+                        "state": "Enabled",  # Assumption
+                        "requiresMfa": requires_mfa
+                    })
+        
+        # Determine overall security settings
+        legacy_auth_blocked = 'legacy authentication' in html_content.lower() and ('block' in html_content.lower() or 'deny' in html_content.lower())
+        mfa_required = any(p["requiresMfa"] for p in policies) or 'mfa' in html_content.lower() or 'multi-factor authentication' in html_content.lower()
+        
+        security_settings = {
+            "legacyAuthenticationBlocked": legacy_auth_blocked,
+            "policiesEnabled": len(policies),  # Assuming all found policies are enabled
+            "totalPolicies": len(policies),
+            "mfaRequired": mfa_required
         }
-        for user in mfa_data 
-        if user.get("accountEnabled", True) and user.get("mfamethods", 0) == 0
-    ]
+        
+        # Determine maturity level based on policies
+        if len(policies) > 5 and security_settings["mfaRequired"] and security_settings["legacyAuthenticationBlocked"]:
+            maturity = "Advanced"
+            description = "Comprehensive Conditional Access policies with MFA and legacy auth blocking"
+        elif len(policies) > 3 and security_settings["mfaRequired"]:
+            maturity = "Intermediate"
+            description = "Multiple Conditional Access policies with some security controls"
+        elif len(policies) > 0 and security_settings["mfaRequired"]:
+            maturity = "Basic"
+            description = "Limited Conditional Access policies in place, but MFA is required"
+        elif len(policies) > 0:
+            maturity = "Basic"
+            description = "Limited Conditional Access policies in place"
+        else:
+            maturity = "Minimal"
+            description = "No Conditional Access policies detected"
+        
+        return {
+            "policies": policies,
+            "securitySettings": security_settings,
+            "maturity": maturity,
+            "description": description
+        }
     
-    # Check for advanced security settings
-    advanced_settings = {
-        "legacyAuthenticationBlocked": any(
-            policy.get("defaultUserRolePermissions", {}).get("allowedToSignInOnPortal") is False
-            for policy in auth_policies
-        ),
-        "registrationRequired": any(
-            policy.get("authenticationMethodsPolicy", {}).get("registrationEnforcement", {}).get("authenticationMethodsRequiredForRegistration", [])
-            for policy in auth_policies
-        ),
-        "securityDefaultsEnabled": security_defaults_enabled
-    }
-    
-    # Construct recommendations based on findings
-    recommendations = []
-    
-    if not advanced_settings["legacyAuthenticationBlocked"]:
-        recommendations.append("Implement Conditional Access policies to block legacy authentication protocols")
-    
-    if mfa_percentage < 90:
-        recommendations.append(f"Increase MFA coverage from {mfa_percentage}% to at least 90% of accounts")
-    
-    if per_user_mfa_count > 0:
-        recommendations.append("Replace legacy per-user MFA with Conditional Access-based MFA policies")
-    
-    if not security_defaults_enabled and not likely_using_ca_for_mfa:
-        recommendations.append("Enable Security Defaults if not using Conditional Access policies")
-    
-    if len(users_without_mfa) > 0:
-        recommendations.append("Implement a Conditional Access policy requiring MFA for all users")
-    
-    # Tenant maturity assessment
-    if security_defaults_enabled:
-        maturity_level = "Basic"
-        maturity_description = "Using Security Defaults for baseline protection"
-    elif likely_using_ca_for_mfa and advanced_settings["legacyAuthenticationBlocked"]:
-        maturity_level = "Advanced"
-        maturity_description = "Using Conditional Access policies with modern authentication enforcement"
-    elif mfa_percentage > 80:
-        maturity_level = "Intermediate"
-        maturity_description = "Good MFA coverage but may lack comprehensive Conditional Access policies"
+    # Try the provided file path first (if any)
+    if file_path and os.path.exists(file_path):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+                policy_data = parse_html_ca_policies(html_content)
+                file_used = file_path
+        except Exception as e:
+            return {
+                "error": f"Failed to read or parse HTML from specified file '{file_path}': {str(e)}",
+                "recommendations": [
+                    "Make sure the file exists and contains valid HTML data",
+                    "Check file permissions and encoding (use UTF-8)"
+                ]
+            }
+    # Try the default file path
+    elif os.path.exists(default_file_path):
+        try:
+            with open(default_file_path, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+                policy_data = parse_html_ca_policies(html_content)
+                file_used = default_file_path
+        except Exception as e:
+            return {
+                "error": f"Failed to read or parse HTML from default file '{default_file_path}': {str(e)}",
+                "recommendations": [
+                    "Make sure the file contains valid HTML data",
+                    "Check file permissions and encoding (use UTF-8)"
+                ]
+            }
     else:
-        maturity_level = "Minimal"
-        maturity_description = "Limited security controls detected"
+        # If file is not found, return a message asking for the file path
+        return {
+            "error": f"Conditional Access policy file not found at default location ({default_file_path})",
+            "fileNotFound": True,
+            "message": "Please specify the file path to your Conditional Access policies HTML file using the file_path parameter",
+            "example": "analyze_conditional_access_policies(file_path='/path/to/your/caps.html')"
+        }
     
-    return {
-        "conditionalAccessMaturity": {
-            "level": maturity_level,
-            "description": maturity_description
-        },
-        "mfaEnforcement": {
-            "totalUsers": total_users,
-            "usersWithMfa": users_with_mfa,
-            "mfaPercentage": mfa_percentage,
-            "perUserMfaCount": per_user_mfa_count,
-            "likelyUsingConditionalAccessForMfa": likely_using_ca_for_mfa
-        },
-        "securitySettings": advanced_settings,
-        "securityGaps": {
-            "usersWithoutMfa": len(users_without_mfa),
-            "usersWithoutMfaSample": users_without_mfa[:10]  # Limit to avoid large payload
-        },
-        "recommendations": recommendations,
-        "bestPractices": [
-            "Implement MFA for all users through Conditional Access",
-            "Block legacy authentication protocols",
-            "Enforce device compliance for access to sensitive data",
-            "Use risk-based Conditional Access policies",
-            "Require MFA for all administrative actions",
-            "Restrict access based on location/network"
-        ]
-    }
+    # If we have policy data from a file, analyze it
+    if policy_data:
+        # Get policy insights
+        policies = policy_data.get("policies", [])
+        enabled_policies = [p for p in policies if p.get("state") == "Enabled"]
+        mfa_policies = [p for p in policies if p.get("requiresMfa")]
+        
+        # Construct recommendations based on findings
+        recommendations = []
+        if not policy_data.get("securitySettings", {}).get("legacyAuthenticationBlocked"):
+            recommendations.append("Implement a Conditional Access policy to block legacy authentication protocols")
+        
+        if len(mfa_policies) == 0:
+            recommendations.append("Add a Conditional Access policy requiring MFA for all users")
+        
+        if len(policies) == 0:
+            recommendations.append("Implement baseline Conditional Access policies according to Microsoft best practices")
+        
+        # Create the analysis result
+        return {
+            "source": f"File: {file_used}",
+            "conditionalAccessMaturity": {
+                "level": policy_data.get("maturity", "Unknown"),
+                "description": policy_data.get("description", "Loaded from HTML file")
+            },
+            "policyStats": {
+                "totalPolicies": len(policies),
+                "enabledPolicies": len(enabled_policies),
+                "mfaPolicies": len(mfa_policies),
+                "policies": policies  # Detailed policy information
+            },
+            "securitySettings": policy_data.get("securitySettings", {}),
+            "recommendations": recommendations if recommendations else [
+                "Your Conditional Access policies look comprehensive. Consider regular reviews to ensure they remain effective."
+            ],
+            "bestPractices": [
+                "Implement MFA for all users through Conditional Access",
+                "Block legacy authentication protocols",
+                "Enforce device compliance for access to sensitive data",
+                "Use risk-based Conditional Access policies",
+                "Require MFA for all administrative actions",
+                "Restrict access based on location/network"
+            ]
+        }
 
 # Prompts for security analysis
 @mcp.prompt()
